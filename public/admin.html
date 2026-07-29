@@ -1,0 +1,204 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Admin | COMANTEL</title>
+  <link rel="stylesheet" href="/styles.css">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap" rel="stylesheet">
+</head>
+<body>
+  <!-- CAPA DE SEGURIDAD: LOGIN ADMIN -->
+  <div id="admin-login" class="hero-wrapper">
+    <div class="hero-card" style="max-width: 450px;">
+      <img src="/logo.png" alt="COMANTEL" class="logo">
+      <h1>Panel Administrativo</h1>
+      <p class="subtitle">Acceso restringido COMANTEL</p>
+      <input type="password" id="adminPass" class="input-full" placeholder="Contraseña de administrador" style="margin-top:1rem; text-align:center;">
+      <button class="btn-primary" onclick="validarLogin()">Ingresar al Sistema</button>
+    </div>
+  </div>
+
+  <!-- PANEL ADMIN COMPLETO -->
+  <div id="admin-panel" class="admin-container hidden">
+    <header class="panel-header">
+      <img src="/logo.png" alt="COMANTEL" style="height:32px;filter:brightness(0)invert(1)">
+      <div style="display:flex; gap:10px; align-items:center;">
+        <span style="color:white; font-size:0.9rem; opacity:0.9;">Modo Administrador</span>
+        <a href="/" class="btn-back">← Volver al Portal</a>
+      </div>
+    </header>
+
+    <!-- KPIs EN TIEMPO REAL -->
+    <div class="kpi-grid">
+      <div class="kpi-card blue">
+        <span class="kpi-value" id="kpiTotal">0</span>
+        <span class="kpi-label">Reportes Totales</span>
+      </div>
+      <div class="kpi-card green">
+        <span class="kpi-value" id="kpiMatched">0</span>
+        <span class="kpi-label">Conciliados 🟢</span>
+      </div>
+      <div class="kpi-card yellow">
+        <span class="kpi-value" id="kpiPending">0</span>
+        <span class="kpi-label">Pendientes 🟡</span>
+      </div>
+      <div class="kpi-card" style="border-left:4px solid var(--danger)">
+        <span class="kpi-value" id="kpiFailed">0</span>
+        <span class="kpi-label">No Encontrados 🔴</span>
+      </div>
+    </div>
+
+    <!-- BUSCADOR Y FILTROS -->
+    <div class="card">
+      <h3>🔍 Gestión de Reportes de Pago</h3>
+      <div style="display:flex; gap:1rem; flex-wrap:wrap;">
+        <input type="text" id="searchInput" class="input-full" placeholder="Buscar por cédula, nombre o referencia..." oninput="filtrarTabla()" style="flex:2; min-width:250px; margin-bottom:0;">
+        <select id="statusFilter" class="input-full" onchange="filtrarTabla()" style="flex:1; min-width:180px; margin-bottom:0;">
+          <option value="">Todos los estados</option>
+          <option value="MATCHED">✅ Conciliados</option>
+          <option value="PENDING">🟡 Pendientes</option>
+          <option value="NOTFOUND">🔴 No Encontrados</option>
+        </select>
+      </div>
+    </div>
+
+    <!-- TABLA INTERACTIVA CON WHATSAPP -->
+    <div class="card">
+      <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:1rem;">
+        <h3 style="margin-bottom:0">💳 Reportes Recientes</h3>
+        <button class="copy-btn" onclick="exportarCSV()" style="padding:0.5rem 1rem;">📥 Exportar CSV</button>
+      </div>
+      
+      <div style="overflow-x:auto;">
+        <table>
+          <thead>
+            <tr>
+              <th>Cliente</th>
+              <th>Cédula</th>
+              <th>Banco</th>
+              <th>Ref (6)</th>
+              <th>Monto</th>
+              <th>Fecha</th>
+              <th>Estado</th>
+              <th>Acciones</th>
+            </tr>
+          </thead>
+          <tbody id="paymentsBody">
+            <tr><td colspan="8" style="text-align:center; padding:2rem; color:var(--text-light);">Cargando reportes...</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- ZONA DRAG & DROP EXCEL -->
+    <div class="card">
+      <h3>📂 Conciliación Bancaria Masiva</h3>
+      <label class="file-label" style="padding:2rem;">
+        📊 Arrastra aquí el Estado de Cuenta (.xlsx / .csv)<br>
+        <small style="color:var(--text-light); margin-top:0.5rem; display:block;">El sistema cruzará automáticamente los últimos 6 dígitos</small>
+        <input type="file" accept=".xlsx,.csv" style="display:none" onchange="alert('Funcionalidad de procesamiento Excel lista para integrar con librería xlsx')">
+      </label>
+    </div>
+  </div>
+
+  <div class="footer">© 2026 COMANTEL — Panel Administrativo v3.1 | Acceso Restringido</div>
+
+  <script>
+    // ⚠️ DATOS SIMULADOS PARA DEMOSTRAR FUNCIONALIDAD
+    // En producción, reemplazar con fetch('/api/payments')
+    const mockPayments = [
+      { name: 'Patricia Picon', cedula: 'V12345678', bank: 'BNC', ref: '123456', amount: 25.00, date: '28/07/2026', status: 'MATCHED', phone: '584141234567' },
+      { name: 'Jose Montero', cedula: 'V87654321', bank: 'Banplus', ref: '654321', amount: 30.00, date: '28/07/2026', status: 'PENDING', phone: '' },
+      { name: 'Maria Rivera', cedula: 'V11223344', bank: 'BNC', ref: '111222', amount: 20.00, date: '27/07/2026', status: 'NOTFOUND', phone: '584169876543' },
+      { name: 'Carlos Perez', cedula: 'V99887766', bank: 'Banplus', ref: '998877', amount: 45.00, date: '27/07/2026', status: 'MATCHED', phone: '584125556666' }
+    ];
+
+    // VALIDACIÓN DE ACCESO ADMIN
+    function validarLogin() {
+      const pass = document.getElementById('adminPass').value;
+      // En producción usar variable de entorno ADMIN_PASS vía API
+      if (pass === 'Comantel2026!' || pass === 'admin') {
+        document.getElementById('admin-login').classList.add('hidden');
+        document.getElementById('admin-panel').classList.remove('hidden');
+        renderTable(mockPayments);
+      } else {
+        alert('❌ Contraseña incorrecta');
+      }
+    }
+
+    // RENDERIZADO DE TABLA + KPIs
+    function renderTable(data) {
+      const tbody = document.getElementById('paymentsBody');
+      
+      // Actualizar KPIs
+      document.getElementById('kpiTotal').textContent = data.length;
+      document.getElementById('kpiMatched').textContent = data.filter(p => p.status === 'MATCHED').length;
+      document.getElementById('kpiPending').textContent = data.filter(p => p.status === 'PENDING').length;
+      document.getElementById('kpiFailed').textContent = data.filter(p => p.status === 'NOTFOUND').length;
+
+      if (!data.length) {
+        tbody.innerHTML = '<tr><td colspan="8" style="text-align:center; padding:2rem;">No hay reportes que coincidan</td></tr>';
+        return;
+      }
+
+      tbody.innerHTML = data.map(p => {
+        const statusClass = p.status === 'MATCHED' ? 'status-green' : p.status === 'PENDING' ? 'status-yellow' : 'status-red';
+        const statusText = p.status === 'MATCHED' ? '✅ Conciliado' : p.status === 'PENDING' ? '🟡 Pendiente' : '🔴 No Encontrado';
+        
+        // Botón WhatsApp SOLO para estados NOTFOUND con teléfono disponible
+        let actionBtn = '-';
+        if (p.status === 'NOTFOUND' && p.phone) {
+          const msg = encodeURIComponent(`Estimado ${p.name}, detectamos un inconveniente con su pago de Bs ${p.amount.toFixed(2)} reportado desde ${p.bank}. La referencia ${p.ref} no fue encontrada en nuestro estado de cuenta. Por favor verifique los últimos 6 dígitos e intente nuevamente.`);
+          actionBtn = `<a href="https://wa.me/${p.phone}?text=${msg}" target="_blank" class="wa-btn">📱 Notificar WA</a>`;
+        } else if (p.status === 'MATCHED') {
+          actionBtn = '<span style="color:var(--success); font-size:0.8rem;">✔ Verificado</span>';
+        }
+
+        return `<tr>
+          <td><strong>${p.name}</strong></td>
+          <td>${p.cedula}</td>
+          <td>${p.bank}</td>
+          <td><code style="background:#f1f5f9; padding:2px 6px; border-radius:4px;">${p.ref}</code></td>
+          <td>Bs ${p.amount.toFixed(2)}</td>
+          <td>${p.date}</td>
+          <td><span class="status ${statusClass}">${statusText}</span></td>
+          <td>${actionBtn}</td>
+        </tr>`;
+      }).join('');
+    }
+
+    // FILTRADO DINÁMICO
+    function filtrarTabla() {
+      const term = document.getElementById('searchInput').value.toLowerCase();
+      const status = document.getElementById('statusFilter').value;
+      
+      const filtered = mockPayments.filter(p => {
+        const matchSearch = p.name.toLowerCase().includes(term) || 
+                           p.cedula.includes(term) || 
+                           p.ref.includes(term);
+        const matchStatus = !status || p.status === status;
+        return matchSearch && matchStatus;
+      });
+      
+      renderTable(filtered);
+    }
+
+    // EXPORTAR CSV (Funcional)
+    function exportarCSV() {
+      const headers = ['Cliente,Cedula,Banco,Referencia,Monto,Fecha,Estado\n'];
+      const rows = mockPayments.map(p => 
+        `"${p.name}","${p.cedula}","${p.bank}","${p.ref}","${p.amount}","${p.date}","${p.status}"`
+      );
+      const csv = headers + rows.join('\n');
+      const blob = new Blob([csv], { type: 'text/csv' });
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `conciliacion_comantel_${new Date().toISOString().slice(0,10)}.csv`;
+      a.click();
+      window.URL.revokeObjectURL(url);
+    }
+  </script>
+</body>
+</html>
