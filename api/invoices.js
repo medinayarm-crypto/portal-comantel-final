@@ -1,179 +1,133 @@
-// Caché en memoria para mapeo cédula → email (1 hora TTL)
 const cache = new Map();
 const CACHE_TTL = 60 * 60 * 1000;
 
 module.exports = async (req, res) => {
-  const doc = req.query.doc; // Ej: V18055316
+  const doc = req.query.doc;
   if (!doc) return res.status(400).json({ ok: false, message: "Falta cédula" });
 
-  // ✅ URL CORREGIDA SEGÚN CAPTURAS F12 Y DOCUMENTACIÓN
-  // Los endpoints /clientes/ y /clientes/ver/ viven en wisphub.io, NO en api.wisphub.io
   const baseUrl = process.env.URL_FACTURACION || 'https://wisphub.io';
   const apiKey = process.env.KEY_FACTURACION;
   const adminCedula = process.env.ADMIN_CEDULA;
 
-  if (!apiKey) {
-    return res.status(500).json({ ok: false, message: "KEY_FACTURACION no configurada en Vercel" });
-  }
+  if (!apiKey) return res.status(500).json({ ok: false, message: "KEY_FACTURACION no configurada" });
 
-  // ✅ ACCESO ADMIN POR CÉDULA
+  // Acceso admin por cédula
   if (adminCedula && doc === adminCedula) {
-    return res.status(200).json({
-      ok: true,
-      isAdmin: true,
-      message: "Acceso administrativo concedido"
-    });
+    return res.status(200).json({ ok: true, isAdmin: true, message: "Acceso administrativo concedido" });
   }
 
   try {
-    // ==========================================
-    // PASO 1: Buscar email por cédula (con caché)
-    // ==========================================
-    let email = null;
+    let clientEmail = null;
+    let clientName = null;
     const cacheKey = `cedula:${doc}`;
     const cached = cache.get(cacheKey);
 
     if (cached && Date.now() - cached.timestamp < CACHE_TTL) {
-      email = cached.email;
-      console.log(`📦 Caché hit para ${doc} → ${email}`);
+      clientEmail = cached.email;
+      clientName = cached.name;
+      console.log(`📦 Caché hit: ${doc} → ${clientEmail}`);
     } else {
-      console.log(`🔍 Buscando cédula ${doc} en ${baseUrl}/clientes/...`);
-
-      const searchUrl = `${baseUrl}/clientes/?buscar=${encodeURIComponent(doc)}`;
-      const searchRes = await fetch(searchUrl, {
+      // PASO 1: Obtener lista de clientes y buscar por DNI en el HTML
+      console.log(`🔍 Buscando cédula ${doc} en lista de clientes...`);
+      const listRes = await fetch(`${baseUrl}/clientes/`, {
         headers: {
           'Authorization': `Bearer ${apiKey}`,
-          'Accept': 'application/json',
-          'Content-Type': 'application/json'
+          'Cookie': `session=${apiKey}`, // Wisphub puede usar cookie en vez de Bearer
+          'Accept': 'text/html'
         }
       });
 
-      if (!searchRes.ok) {
-        const errText = await searchRes.text().catch(() => '');
-        console.error(`❌ Búsqueda falló (${searchRes.status}):`, errText.substring(0, 300));
-        throw new Error(`Búsqueda de cliente falló: HTTP ${searchRes.status}`);
-      }
+      if (!listRes.ok) throw new Error(`Error accediendo a /clientes/: ${listRes.status}`);
 
-      const searchData = await searchRes.json();
-      const clientes = searchData.data || searchData.results || searchData.clientes || [];
+      const html = await listRes.text();
 
-      // Búsqueda exhaustiva en múltiples campos posibles
-      const cliente = clientes.find(c =>
-        c.dni === doc ||
-        c.cedula === doc ||
-        c.document === doc ||
-        c['DNI/C.I./RIF'] === doc ||
-        c['DNI/C.I./C.C./RIF'] === doc ||
-        c.identificacion === doc
+      // Buscar patrón: DNI/C.I. seguido de email @comantel en la misma fila de tabla
+      // Según captura: "20168749 ... giselamontoro@comantel ... Gisela Del Carmen ..."
+      const dniRegex = new RegExp(
+        `${doc.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}[\\s\\S]{0,500}?([a-zA-Z0-9._-]+@comantel)[\\s\\S]{0,200}?(?:<td[^>]*>([^<]*)</td>)?`,
+        'i'
       );
+      const match = html.match(dniRegex);
 
-      if (!cliente) {
+      if (match && match[1]) {
+        clientEmail = match[1];
+        clientName = match[2]?.trim() || clientEmail.split('@')[0];
+        console.log(`✅ Cliente encontrado: ${clientName} (${clientEmail})`);
+      } else {
+        // Intento alternativo: buscar email @comantel cerca de la cédula
+        const altRegex = new RegExp(
+          `([a-zA-Z0-9._-]+@comantel)[\\s\\S]{0,300}?${doc.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}`,
+          'i'
+        );
+        const altMatch = html.match(altRegex);
+        if (altMatch && altMatch[1]) {
+          clientEmail = altMatch[1];
+          clientName = clientEmail.split('@')[0];
+          console.log(`✅ Cliente encontrado (búsqueda inversa): ${clientName} (${clientEmail})`);
+        }
+      }
+
+      if (!clientEmail) {
         return res.status(404).json({
           ok: false,
-          message: `No se encontró ningún cliente con cédula ${doc} en Wisphub`
+          message: `No se encontró cliente con cédula ${doc}. Verifica que esté registrada en Wisphub.`
         });
       }
 
-      // Construir email interno @comantel
-      email = cliente.email || cliente.usuario || cliente.Usuario || cliente.user;
-      if (!email) {
-        return res.status(404).json({
-          ok: false,
-          message: `Cliente encontrado pero sin email/usuario asociado`
-        });
-      }
-      if (!email.includes('@')) email = `${email}@comantel`;
-
-      // Guardar en caché
-      cache.set(cacheKey, { email, timestamp: Date.now() });
-      console.log(`✅ Email resuelto: ${email}`);
+      cache.set(cacheKey, { email: clientEmail, name: clientName, timestamp: Date.now() });
     }
 
-    // ==========================================
-    // PASO 2: Obtener detalle completo del cliente
-    // ==========================================
-    const detailUrl = `${baseUrl}/clientes/ver/${encodeURIComponent(email)}/`;
-    console.log(`📋 Consultando detalle: ${detailUrl}`);
-
-    const detailRes = await fetch(detailUrl, {
+    // PASO 2: Obtener historial de pagos desde /pagos/ filtrado por cliente
+    console.log(`📋 Obteniendo pagos para ${clientEmail}...`);
+    const pagosRes = await fetch(`${baseUrl}/pagos/?buscar=${encodeURIComponent(clientEmail)}&estado=pendiente`, {
       headers: {
         'Authorization': `Bearer ${apiKey}`,
-        'Accept': 'application/json',
-        'Content-Type': 'application/json'
+        'Cookie': `session=${apiKey}`,
+        'Accept': 'text/html'
       }
     });
 
-    if (!detailRes.ok) {
-      const errText = await detailRes.text().catch(() => '');
-      console.error(`❌ Detalle falló (${detailRes.status}):`, errText.substring(0, 300));
-      throw new Error(`Consulta de detalle falló: HTTP ${detailRes.status}`);
+    let pendingInvoices = [];
+    let totalPending = 0;
+
+    if (pagosRes.ok) {
+      const pagosHtml = await pagosRes.text();
+      // Extraer filas de tabla de pagos pendientes
+      // Patrón: #Factura | Cliente | Estado Factura | Total
+      const invoiceRegex = /#(\d+)[\s\S]{0,100}?Pendiente de pago[\s\S]{0,100}?\$(\d+(?:\.\d{2})?)/gi;
+      let invMatch;
+      while ((invMatch = invoiceRegex.exec(pagosHtml)) !== null) {
+        const amount = parseFloat(invMatch[2]);
+        pendingInvoices.push({
+          factura: invMatch[1],
+          monto: amount,
+          estado: 'Pendiente de pago'
+        });
+        totalPending += amount;
+      }
+      console.log(`📊 Encontradas ${pendingInvoices.length} facturas pendientes`);
     }
 
-    const clientData = await detailRes.json();
-
-    // ==========================================
-    // PASO 3: Extraer y clasificar facturas
-    // ==========================================
-    const allInvoices = clientData.facturas ||
-                        clientData.invoices ||
-                        clientData.historial_pagos ||
-                        clientData.Historial_de_Pagos ||
-                        clientData.pagos ||
-                        [];
-
-    const pending = allInvoices.filter(f =>
-      f.estado === 'Pendiente de pago' ||
-      f.status === 'PENDING' ||
-      f.Estado === 'Pendiente' ||
-      f.Estado_Factura === 'Pendiente de pago' ||
-      f.estado_factura === 'pendiente'
-    );
-
-    const processed = allInvoices.filter(f =>
-      f.estado === 'Pagada' ||
-      f.status === 'PAID' ||
-      f.Estado === 'Pagada' ||
-      f.Estado_Factura === 'Pagada' ||
-      f.estado_factura === 'pagada'
-    );
-
-    const totalPending = pending.reduce((sum, f) =>
-      sum + (parseFloat(f.Total || f.amount || f.monto || f.total || f.valor) || 0), 0
-    );
-
-    // ==========================================
-    // PASO 4: Respuesta completa al frontend
-    // ==========================================
+    // Respuesta al frontend
     res.status(200).json({
       ok: true,
       isAdmin: false,
-      client_name: clientData.nombre || clientData.Nombre || clientData.name || email.split('@')[0],
+      client_name: clientName,
       cedula: doc,
-      email_internal: email, // Solo para debug backend, NO exponer en UI
-      invoices: allInvoices,
-      pending_invoices: pending,
-      processed_invoices: processed,
+      invoices: pendingInvoices,
+      pending_invoices: pendingInvoices,
+      processed_invoices: [],
       total_pending: totalPending,
-      processed_count: processed.length,
-      pending_count: pending.length,
-      services: clientData.services || clientData.Servicios || [],
+      processed_count: 0,
+      pending_count: pendingInvoices.length,
       bank_data: {
-        bnc: {
-          telefono: process.env.BNC_TELEFONO || '-',
-          cedula: process.env.BNC_CEDULA || '-'
-        },
-        banplus: {
-          telefono: process.env.BANPLUS_TELEFONO || '-',
-          cedula: process.env.BANPLUS_CEDULA || '-'
-        }
+        bnc: { telefono: process.env.BNC_TELEFONO || '-', cedula: process.env.BNC_CEDULA || '-' },
+        banplus: { telefono: process.env.BANPLUS_TELEFONO || '-', cedula: process.env.BANPLUS_CEDULA || '-' }
       }
     });
 
   } catch (error) {
-    console.error('💥 Error fatal en invoices.js:', error.message);
-    res.status(500).json({
-      ok: false,
-      message: `Error interno: ${error.message}`
-    });
+    console.error('💥 Error fatal:', error.message);
+    res.status(500).json({ ok: false, message: error.message });
   }
 };
