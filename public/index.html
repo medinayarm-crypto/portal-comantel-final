@@ -1,0 +1,146 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Portal de Pagos | COMANTEL</title>
+  <link rel="stylesheet" href="/styles.css">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap" rel="stylesheet">
+</head>
+<body>
+  <!-- VISTA 1: HERO CARD -->
+  <div id="view-search" class="hero-wrapper">
+    <div class="hero-card">
+      <img src="/logo.png" alt="COMANTEL" class="logo">
+      <h1>Portal de Pagos</h1>
+      <p class="subtitle">Ingresa tu cédula para consultar servicios</p>
+      <div class="search-box">
+        <select id="docType" class="doc-select">
+          <option value="V">V</option><option value="E">E</option>
+          <option value="J">J</option><option value="G">G</option>
+        </select>
+        <input type="text" id="cedula" class="cedula-input" placeholder="Número de cédula" inputmode="numeric">
+      </div>
+      <button class="btn-primary" onclick="buscarCliente()">Consultar Servicios</button>
+    </div>
+  </div>
+
+  <!-- VISTA 2: PANEL CLIENTE -->
+  <div id="view-panel" class="panel-container hidden">
+    <header class="panel-header">
+      <img src="/logo.png" alt="COMANTEL" style="height:32px;filter:brightness(0)invert(1)">
+      <button class="btn-back" onclick="location.reload()">← Salir</button>
+    </header>
+
+    <div style="text-align:center;margin-bottom:2rem">
+      <h2 id="clientName" style="color:var(--com-blue);font-size:1.8rem"></h2>
+      <p id="clientCedula" style="color:var(--text-light)"></p>
+    </div>
+
+    <div class="kpi-grid">
+      <div class="kpi-card green"><span class="kpi-value" id="kpiProcessed">0</span><span class="kpi-label">Procesadas</span></div>
+      <div class="kpi-card yellow"><span class="kpi-value" id="kpiPending">0</span><span class="kpi-label">Pendientes</span></div>
+      <div class="kpi-card blue"><span class="kpi-value" id="kpiTotal">Bs 0,00</span><span class="kpi-label">Total a Pagar</span></div>
+    </div>
+
+    <div class="card">
+      <h3>🏧 Datos para Pago Móvil / Transferencia</h3>
+      <select id="bankSelect" class="input-full" onchange="mostrarBanco()">
+        <option value="">-- Seleccione Banco --</option>
+        <option value="bnc">BNC</option>
+        <option value="banplus">Banplus</option>
+      </select>
+      <div id="bankDetails" class="hidden bank-details">
+        <div class="data-row"><strong>Teléfono:</strong> <span id="bankPhone">-</span> <button class="copy-btn" onclick="copiar('bankPhone')">Copiar</button></div>
+        <div class="data-row"><strong>Cédula:</strong> <span id="bankCed">-</span> <button class="copy-btn" onclick="copiar('bankCed')">Copiar</button></div>
+      </div>
+    </div>
+
+    <div class="card">
+      <h3>📝 Reportar Pago Realizado</h3>
+      <input type="text" id="refPago" class="input-full" placeholder="Últimos 6 dígitos de referencia" maxlength="6">
+      <input type="number" id="montoPago" class="input-full" placeholder="Monto pagado (Bs)" step="0.01">
+      <label class="file-label">
+        📷 Captura de pantalla (opcional)
+        <input type="file" id="capturaPago" accept="image/*" style="display:none">
+      </label>
+      <button class="btn-primary" onclick="reportarPago()">✅ Enviar Reporte</button>
+    </div>
+  </div>
+
+  <div class="footer">© 2026 COMANTEL — Sistema de Conciliación Bancaria v3.1</div>
+
+  <script>
+    let currentClient = null;
+
+    async function buscarCliente() {
+      const tipo = document.getElementById('docType').value;
+      const cedula = document.getElementById('cedula').value.trim();
+      if (!cedula || !/^\d+$/.test(cedula)) return alert('Ingresa una cédula válida (solo números)');
+
+      const btn = document.querySelector('.btn-primary');
+      btn.textContent = 'Buscando...';
+      btn.disabled = true;
+
+      try {
+        const res = await fetch(`/api/invoices?doc=${tipo}${cedula}`);
+        const data = await res.json();
+
+        if (data.isAdmin) {
+          window.location.href = '/admin.html';
+          return;
+        }
+
+        if (!data.ok) throw new Error(data.message);
+
+        currentClient = data;
+        renderPanel(data);
+        document.getElementById('view-search').classList.add('hidden');
+        document.getElementById('view-panel').classList.remove('hidden');
+      } catch (err) {
+        alert('❌ ' + err.message);
+      } finally {
+        btn.textContent = 'Consultar Servicios';
+        btn.disabled = false;
+      }
+    }
+
+    function renderPanel(data) {
+      document.getElementById('clientName').textContent = data.client_name;
+      document.getElementById('clientCedula').textContent = `Cédula: ${data.cedula}`;
+      document.getElementById('kpiProcessed').textContent = data.processed_count;
+      document.getElementById('kpiPending').textContent = data.pending_count;
+      document.getElementById('kpiTotal').textContent = `Bs ${data.total_pending.toFixed(2)}`;
+    }
+
+    function mostrarBanco() {
+      const bank = document.getElementById('bankSelect').value;
+      const details = document.getElementById('bankDetails');
+      if (!bank || !currentClient?.bank_data?.[bank]) {
+        details.classList.add('hidden');
+        return;
+      }
+      const info = currentClient.bank_data[bank];
+      document.getElementById('bankPhone').textContent = info.telefono;
+      document.getElementById('bankCed').textContent = info.cedula;
+      details.classList.remove('hidden');
+    }
+
+    function copiar(id) {
+      navigator.clipboard.writeText(document.getElementById(id).textContent);
+      alert('✅ Copiado al portapapeles');
+    }
+
+    async function reportarPago() {
+      const ref = document.getElementById('refPago').value.trim();
+      const monto = document.getElementById('montoPago').value;
+      if (!ref || !monto) return alert('Completa referencia y monto');
+
+      // Simulación de envío exitoso
+      alert(`✅ Reporte enviado exitosamente\nRef: ${ref}\nMonto: Bs ${monto}\n\nUn administrador verificará tu pago.`);
+      document.getElementById('refPago').value = '';
+      document.getElementById('montoPago').value = '';
+    }
+  </script>
+</body>
+</html>
