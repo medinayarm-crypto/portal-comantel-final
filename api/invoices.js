@@ -6,8 +6,9 @@ module.exports = async (req, res) => {
   const doc = req.query.doc; // Ej: V18055316
   if (!doc) return res.status(400).json({ ok: false, message: "Falta cédula" });
 
-  // ✅ URL CORRECTA CONFIRMADA
-  const baseUrl = process.env.URL_FACTURACION || 'https://api.wisphub.io';
+  // ✅ URL CORREGIDA SEGÚN CAPTURAS F12 Y DOCUMENTACIÓN
+  // Los endpoints /clientes/ y /clientes/ver/ viven en wisphub.io, NO en api.wisphub.io
+  const baseUrl = process.env.URL_FACTURACION || 'https://wisphub.io';
   const apiKey = process.env.KEY_FACTURACION;
   const adminCedula = process.env.ADMIN_CEDULA;
 
